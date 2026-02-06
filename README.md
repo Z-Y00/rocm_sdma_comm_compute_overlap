@@ -21,11 +21,11 @@ docker run -it --rm \
 ```
 
 ## Step 2 build the lib
-Ref: https://rocm.docs.amd.com/projects/HIP/en/latest/install/build.html
+Patch: https://rocm.docs.amd.com/projects/HIP/en/latest/install/build.html
 ```
 apt-get install libsimde-dev xxd
+apt-get install rocm-llvm-dev vim 
 pip3 install CppHeaderParser
-apt-get install rocm-llvm-dev 
 
 git clone https://github.com/ROCm/rocm-systems.git
 cd rocm-systems
@@ -42,10 +42,10 @@ cd "$CLR_DIR"
 mkdir -p build; cd build
 cmake -DHIP_COMMON_DIR=$HIP_DIR -DHIP_PLATFORM=amd -DCMAKE_PREFIX_PATH="/opt/rocm/" -DCMAKE_INSTALL_PREFIX=$PWD/install -DCLR_BUILD_HIP=ON -DCLR_BUILD_OCL=OFF ..
 make -j$(nproc)
-sudo make install
+make install
 ```
 
-## Step3 Testing
+## Step3.1 Testing with simple program (skipable after init testing)
 ```
 # clone
 git clone https://github.com/Z-Y00/rocm_sdma_comm_compute_overlap.git
@@ -68,9 +68,41 @@ mpicc -showme:compile
 -I/usr/lib/x86_64-linux-gnu/openmpi/include -I/usr/lib/x86_64-linux-gnu/openmpi/include/openmpi
 ```
 
-## Step4 Profiling
+## Step3.2 Profiling simple program
 We need to make sure that this program is really using sdma, not regular memcpy.
 ```
 rocprofv3 --kernel-trace --output-format csv -- mpirun -np 8 --allow-run-as-root sdma_memcpy_test
 ```
 We should see 4 __amd_rocclr_copyBuffer, which are for the h2d,d2h memcopy
+
+## Step4 RCCL build and test
+```
+cd /workspace
+git clone https://github.com/Z-Y00/rccl-sdma.git
+cd rccl-sdma
+./install.sh -if
+
+cd /workspace
+git clone https://github.com/ROCm/rccl-tests.git
+cd rccl-tests
+make -j MPI=1
+```
+### Test and Profile rccl
+```
+# Note: Please check the RCCL version printed, in case the older one didn't got replaced 
+export NCCL_DEBUG=VERSION
+# run any rccl-test commmand
+<!-- gdb --args ->
+export NCCL_LOCAL_REGISTER=1 # for buffer registering 
+export NCCL_CTA_POLICY=2 #  NCCL_CTA_POLICY_ZERO
+export NCCL_CUMEM_ENABLE=1 # default rccl value is 0 as disabling
+export NCCL_DEBUG=TRACE
+export HSA_NO_SCRATCH_RECLAIM=1
+# * `-R,--local_register <0/1/2>` enable local (1) or symmetric (2) buffer registration on send/recv buffers. Default : 0.
+mpirun --allow-run-as-root -np 8 --bind-to numa ./build/all_gather_perf -R 2 -b 128M -e 128M -f 2 -g 1
+gdb -ex=r --args  ./build/all_gather_perf -R 1 -b 128M -e 128M -f 2 -g 2
+gdb -ex=r --args  ./build/all_gather_perf -R 2 -b 128M -e 128M -f 2 -g 2
+
+
+rocprofv3 --hip-trace --output-format csv --  mpirun --allow-run-as-root -np 8 --bind-to numa ./build/all_gather_perf -b 128M -e 128M -f 2 -g 1 
+```
