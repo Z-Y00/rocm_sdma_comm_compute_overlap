@@ -6,11 +6,8 @@ export NODE_RANK=0
 export MASTER_ADDR=localhost
 export MASTER_PORT=1235
 
-# rccl install: 
-# ./install.sh -f
 # export NCCL_P2P_USE_CUDA_MEMCPY=1
 export TORCH_NCCL_USE_TENSOR_REGISTER_ALLOCATOR_HOOK=true 
-# export NCCL_DEBUG=INFO
 DISTRIBUTED_ARGS=(
     --nproc_per_node "${GPUS_PER_NODE}"
     --nnodes "${NNODES}"
