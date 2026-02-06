@@ -96,7 +96,7 @@ export NCCL_DEBUG=VERSION
 export NCCL_LOCAL_REGISTER=1 # for buffer registering 
 export NCCL_CTA_POLICY=2 #  NCCL_CTA_POLICY_ZERO
 export NCCL_CUMEM_ENABLE=1 # default rccl value is 0 as disabling
-export NCCL_DEBUG=TRACE
+export NCCL_DEBUG=VERSION#TRACE
 export HSA_NO_SCRATCH_RECLAIM=1
 # * `-R,--local_register <0/1/2>` enable local (1) or symmetric (2) buffer registration on send/recv buffers. Default : 0.
 mpirun --allow-run-as-root -np 8 --bind-to numa ./build/all_gather_perf -R 2 -b 128M -e 128M -f 2 -g 1

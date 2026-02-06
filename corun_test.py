@@ -53,8 +53,6 @@ def init_dist(args):
 
 
 
-
-
 tag = "test_dma_all_gather"
 def run_gemm(device):
         m=28672  
@@ -202,22 +200,7 @@ def run(rank, size,config,comm):
     dist.barrier(async_op=False) # wait till all the process is up
     torch.cuda.synchronize(device=rank)
     start_time = time.time()
-    # dist.all_gather(gather_list, overhead_test)
-    # torch.cuda.synchronize(device=rank)
     print("test run finish")
-    #end_time = time.time()
-    #overhead_time = end_time - start_time
-    #print(f"1st call overhead time: {overhead_time:.2f} seconds")
-    # Perform 2nd all_gather operation.
-    #torch.cuda.synchronize(device=rank)
-    #start_time = time.time()
-    #dist.all_gather(gather_list, overhead_test)
-    #torch.cuda.synchronize(device=rank)
-    #end_time = time.time()
-    #overhead_time = end_time - start_time
-    #print(f"2nd call overhead time: {overhead_time:.2f} seconds")
-    
-    # dma_engine = AllGatherEngine("test_dma_all_gather")
     
     # warmup
     bandwidth_test(None, rank, (1024*1024*204/8), size,config,comm)
@@ -242,15 +225,6 @@ def init_processes(rank, size, fn, backend='nccl'):
 
 if __name__ == "__main__":
     size = 8
-    # processes = []
-    # for rank in range(size):
-    #     p = Process(target=init_processes, args=(rank, size, run))
-    #     p.start()
-    #     processes.append(p)
-
-    # for p in processes:
-    #     p.join()
-    #     print("finished process")
 
     args = get_args()
 
