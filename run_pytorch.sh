@@ -33,4 +33,4 @@ DISTRIBUTED_ARGS=(
 # bash ./run_rccl.sh --config 405B --comm reduce_scatter # run 405B with reduce_scatter
 # bash ./run_rccl.sh --comm reduce_scatter # run 70B with reduce_scatter
 
-torchrun "${DISTRIBUTED_ARGS[@]}" ./corun_test_rccl.py $1 $2 $3 $4 $5 $6
+torchrun "${DISTRIBUTED_ARGS[@]}" ./corun_test.py $1 $2 $3 $4 $5 $6
