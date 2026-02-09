@@ -23,8 +23,7 @@ docker run -it --rm \
 ## Step 2 build the lib
 Patch: https://rocm.docs.amd.com/projects/HIP/en/latest/install/build.html
 ```
-apt-get install libsimde-dev xxd
-apt-get install rocm-llvm-dev vim 
+apt-get install libsimde-dev xxd rocm-llvm-dev vim -y
 pip3 install CppHeaderParser
 
 git clone https://github.com/ROCm/rocm-systems.git
@@ -48,6 +47,7 @@ make install
 ## Step3.1 Testing with simple program (skipable after init testing)
 ```
 # clone
+cd /workspace
 git clone https://github.com/Z-Y00/rocm_sdma_comm_compute_overlap.git
 cd rocm_sdma_comm_compute_overlap
 
@@ -80,12 +80,8 @@ We should see 4 __amd_rocclr_copyBuffer, which are for the h2d,d2h memcopy
 cd /workspace
 git clone https://github.com/Z-Y00/rccl-sdma.git
 cd rccl-sdma
-./install.sh -if
+./install.sh -if # --generate-sym-kernels # we need to explicit setting this for some commits
 
-cd /workspace
-git clone https://github.com/ROCm/rccl-tests.git
-cd rccl-tests
-make -j MPI=1
 ```
 ### Test and Profile rccl
 ```
@@ -93,16 +89,52 @@ make -j MPI=1
 export NCCL_DEBUG=VERSION
 # run any rccl-test commmand
 <!-- gdb --args ->
-export NCCL_LOCAL_REGISTER=1 # for buffer registering 
+export NCCL_LOCAL_REGISTER=2 # for buffer registering 
 export NCCL_CTA_POLICY=2 #  NCCL_CTA_POLICY_ZERO
 export NCCL_CUMEM_ENABLE=1 # default rccl value is 0 as disabling
-export NCCL_DEBUG=VERSION#TRACE
+export NCCL_DEBUG=VERSION #TRACE
 export HSA_NO_SCRATCH_RECLAIM=1
-# * `-R,--local_register <0/1/2>` enable local (1) or symmetric (2) buffer registration on send/recv buffers. Default : 0.
-mpirun --allow-run-as-root -np 8 --bind-to numa ./build/all_gather_perf -R 2 -b 128M -e 128M -f 2 -g 1
-gdb -ex=r --args  ./build/all_gather_perf -R 1 -b 128M -e 128M -f 2 -g 2
-gdb -ex=r --args  ./build/all_gather_perf -R 2 -b 128M -e 128M -f 2 -g 2
+```
+### replace python
+[This?](https://rocm.docs.amd.com/projects/rccl/en/develop/how-to/rccl-usage-tips.html#using-rccl-and-cpx-in-pytorch)
+Librccl path :
+cp /opt/rocm/lib/librccl.so /opt/venv/lib/python3.10/site-packages/torch/lib/librccl.so
+nm /opt/rocm/lib/librccl.so | grep ncclSymkGetKernelPtr
+### pytorch patch
+https://docs.pytorch.org/docs/stable/distributed.html#copy-engine-collectives
+
+We also need to recompile pytorch, as it will detect rccl CE support before kicking start.
+https://github.com/pytorch/pytorch/blob/6e866c4a69cb9ed0fc58e0fb20628a6e4a65e39b/torch/csrc/distributed/c10d/NCCLUtils.hpp#L65
+```
+cd /workspace
+python -c "import torch; print(torch.version.git_version)"
+7bb0466bb4d732f0aa3273c0122f3213003b182b
+
+pip install ninja cmake==3.31 setuptools wheel
+pip install uv tabulate
+pip install ipython pytest fire pydantic pybind11
+git clone https://github.com/pytorch/pytorch.git \
+    && cd pytorch \
+    && git checkout 7bb0466bb4d732f0aa3273c0122f3213003b182b \
+    && git submodule update --recursive --init \
+    && ./tools/amd_build/build_amd.py \
+    && BUILD_TEST=0 python3 setup.py install \
+    && cd ..
+
+```
 
 
-rocprofv3 --hip-trace --output-format csv --  mpirun --allow-run-as-root -np 8 --bind-to numa ./build/all_gather_perf -b 128M -e 128M -f 2 -g 1 
+# CUDA test
+```
+docker run --rm --gpus all  -it   -v $HOME:$HOME    -v $HOME/.ssh:/root/.ssh  nvidia/cuda:13.1.1-cudnn-devel-ubuntu24.04 bash
+apt update
+apt-get install gdb openmpi-bin libopenmpi-dev vim -y
+ mpicc -showme:compile
+-I/usr/lib/x86_64-linux-gnu/openmpi/include -I/usr/lib/x86_64-linux-gnu/openmpi/include/openmpi
+
+nvcc -std=c++14 -O0 -g -o sdma_memcpy_test cuda_memcpy_test.cpp -lmpi -lmpi_cxx -I/usr/lib/x86_64-linux-gnu/openmpi/include -I/usr/lib/x86_64-linux-gnu/openmpi/include/openmpi
+
+gdb --args mpirun -np 8 --allow-run-as-root sdma_memcpy_test
+
+nsys profile mpirun -np 8 --allow-run-as-root sdma_memcpy_test
 ```
