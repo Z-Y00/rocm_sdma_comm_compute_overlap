@@ -132,9 +132,10 @@ apt-get install gdb openmpi-bin libopenmpi-dev vim -y
  mpicc -showme:compile
 -I/usr/lib/x86_64-linux-gnu/openmpi/include -I/usr/lib/x86_64-linux-gnu/openmpi/include/openmpi
 
-nvcc -std=c++14 -O0 -g -o sdma_memcpy_test cuda_memcpy_test.cpp -lmpi -lmpi_cxx -I/usr/lib/x86_64-linux-gnu/openmpi/include -I/usr/lib/x86_64-linux-gnu/openmpi/include/openmpi
+nvcc -std=c++14 -O0 -g -o sdma_memcpy_test test.cpp -lmpi -lmpi_cxx -I/usr/lib/x86_64-linux-gnu/openmpi/include -I/usr/lib/x86_64-linux-gnu/openmpi/include/openmpi
 
 gdb --args mpirun -np 8 --allow-run-as-root sdma_memcpy_test
 
 nsys profile mpirun -np 8 --allow-run-as-root sdma_memcpy_test
+nsys profile mpirun -np 2 --allow-run-as-root sdma_memcpy_test
 ```
