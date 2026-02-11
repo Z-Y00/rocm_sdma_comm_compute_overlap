@@ -80,22 +80,22 @@ def bandwidth_test(rank, size, world_size, group_name, comm):
     num_elems = int(size)
 
     # Allocate tensors using symmetric memory
-    # inp_symm = symm_mem.empty(num_elems, device=device)
-    # out_symm = symm_mem.empty(num_elems * world_size, device=device)
+    inp_symm = symm_mem.empty(num_elems, device=device)
+    out_symm = symm_mem.empty(num_elems * world_size, device=device)
 
 
     # Cast to desired dtype and fill input (symm_mem.empty returns a tensor we can use)
-    # inp_symm = inp_symm.to(torch.bfloat16)
-    # out_symm = out_symm.to(torch.bfloat16)
-    # inp_symm.fill_(rank)
+    inp_symm = inp_symm.to(torch.bfloat16)
+    out_symm = out_symm.to(torch.bfloat16)
+    inp_symm.fill_(rank)
 
-    # # Register tensors for symmetric memory operations
-    # symm_mem.rendezvous(inp_symm, group=group_name)
-    # symm_mem.rendezvous(out_symm, group=group_name)
+    # Register tensors for symmetric memory operations
+    symm_mem.rendezvous(inp_symm, group=group_name)
+    symm_mem.rendezvous(out_symm, group=group_name)
 
-    # Normal tensor allocation
-    input_tensor = torch.full([num_elems], rank, dtype=torch.bfloat16, device=device)
-    output_tensor = torch.zeros([num_elems * world_size], dtype=torch.bfloat16, device=device)
+    # # Normal tensor allocation
+    # input_tensor = torch.full([num_elems], rank, dtype=torch.bfloat16, device=device)
+    # output_tensor = torch.zeros([num_elems * world_size], dtype=torch.bfloat16, device=device)
  
     dist.barrier(async_op=False)
     torch.cuda.synchronize(device=rank)
@@ -119,10 +119,10 @@ def bandwidth_test(rank, size, world_size, group_name, comm):
     if comm == "all_gather":
         print("Doing all_gather")
         for i in range(1):
-            # work = dist.all_gather_into_tensor(out_symm, inp_symm, async_op=True)
-            # work.wait()
-            work = dist.all_gather_into_tensor(input_tensor, output_tensor, async_op=True)
+            work = dist.all_gather_into_tensor(out_symm, inp_symm, async_op=True)
             work.wait()
+            # work = dist.all_gather_into_tensor(input_tensor, output_tensor, async_op=True)
+            # work.wait()
     else:
         print("Doing reduce_scatter")
         for i in range(1):

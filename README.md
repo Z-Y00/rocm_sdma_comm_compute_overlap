@@ -88,12 +88,6 @@ cd rccl-sdma
 # Note: Please check the RCCL version printed, in case the older one didn't got replaced 
 export NCCL_DEBUG=VERSION
 # run any rccl-test commmand
-<!-- gdb --args ->
-export NCCL_LOCAL_REGISTER=2 # for buffer registering 
-export NCCL_CTA_POLICY=2 #  NCCL_CTA_POLICY_ZERO
-export NCCL_CUMEM_ENABLE=1 # default rccl value is 0 as disabling
-export NCCL_DEBUG=VERSION #TRACE
-export HSA_NO_SCRATCH_RECLAIM=1
 ```
 ### replace python
 [This?](https://rocm.docs.amd.com/projects/rccl/en/develop/how-to/rccl-usage-tips.html#using-rccl-and-cpx-in-pytorch)
@@ -105,14 +99,21 @@ https://docs.pytorch.org/docs/stable/distributed.html#copy-engine-collectives
 
 We also need to recompile pytorch, as it will detect rccl CE support before kicking start.
 https://github.com/pytorch/pytorch/blob/6e866c4a69cb9ed0fc58e0fb20628a6e4a65e39b/torch/csrc/distributed/c10d/NCCLUtils.hpp#L65
+
+related code
+https://github.com/pytorch/pytorch/blob/af3ee4dc21caa68d860acf0f8f66064469066a8a/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp#L242
+https://github.com/search?q=repo%3Apytorch%2Fpytorch+registerSegment+&type=code
+https://github.com/pytorch/pytorch/blob/main/c10/cuda/CUDAAllocatorConfig.h#L34
+https://github.com/pytorch/pytorch/blob/af3ee4dc21caa68d860acf0f8f66064469066a8a/torch/csrc/distributed/c10d/symm_mem/NCCLSymmetricMemory.cu#L87
+https://github.com/pytorch/pytorch/blob/af3ee4dc21caa68d860acf0f8f66064469066a8a/torch/csrc/distributed/c10d/NCCLUtils.cpp#L501
 ```
 cd /workspace
 python -c "import torch; print(torch.version.git_version)"
-7bb0466bb4d732f0aa3273c0122f3213003b182b
-
-pip install ninja cmake==3.31 setuptools wheel
-pip install uv tabulate
-pip install ipython pytest fire pydantic pybind11
+# 7bb0466bb4d732f0aa3273c0122f3213003b182b
+python3 -m pip install --upgrade pip
+pip install ninja  setuptools wheel uv tabulate ipython pytest fire pydantic pybind11
+pip install cmake==4.2.1
+pip install setuptools==82.0.0
 git clone https://github.com/pytorch/pytorch.git \
     && cd pytorch \
     && git checkout 7bb0466bb4d732f0aa3273c0122f3213003b182b \
@@ -121,6 +122,13 @@ git clone https://github.com/pytorch/pytorch.git \
     && BUILD_TEST=0 python3 setup.py install \
     && cd ..
 
+python -c "import torch; print(torch.distributed.ProcessGroupNCCL.NCCL_CTA_POLICY_ZERO)"
+# 2
+
+docker commit -m "fix pytorch upgrade" 0f1b94036eff sdma
+
+# test pytorch rccl
+bash ./run_pytorch.sh
 ```
 
 
