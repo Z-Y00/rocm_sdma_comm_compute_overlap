@@ -106,6 +106,9 @@ https://github.com/search?q=repo%3Apytorch%2Fpytorch+registerSegment+&type=code
 https://github.com/pytorch/pytorch/blob/main/c10/cuda/CUDAAllocatorConfig.h#L34
 https://github.com/pytorch/pytorch/blob/af3ee4dc21caa68d860acf0f8f66064469066a8a/torch/csrc/distributed/c10d/symm_mem/NCCLSymmetricMemory.cu#L87
 https://github.com/pytorch/pytorch/blob/af3ee4dc21caa68d860acf0f8f66064469066a8a/torch/csrc/distributed/c10d/NCCLUtils.cpp#L501
+
+FSDP reference
+https://docs.nvidia.com/megatron-core/developer-guide/latest/discussions/megatron-fsdp-user-guide/megatron-fsdp-user-guide.html#add-use-nccl-ub
 ```
 cd /workspace
 python -c "import torch; print(torch.version.git_version)"
