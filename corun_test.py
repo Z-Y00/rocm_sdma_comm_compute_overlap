@@ -97,7 +97,7 @@ def bandwidth_test(rank, size, world_size, group_name, comm):
     input_tensor = torch.full([num_elems], rank, dtype=torch.bfloat16, device=device)
     output_tensor = torch.zeros([num_elems * world_size], dtype=torch.bfloat16, device=device)
  
-    dist.barrier(async_op=False)
+    # dist.barrier(async_op=False)
     torch.cuda.synchronize(device=rank)
     start_time = time.time()
 
@@ -139,7 +139,7 @@ def bandwidth_test(rank, size, world_size, group_name, comm):
 def run(rank, size, config, comm, group_name):
     """Distributed run: bandwidth test with symmetric memory and CE collectives."""
     device = torch.device("cuda", rank)
-    dist.barrier(async_op=False)
+    # dist.barrier(async_op=False)
     torch.cuda.synchronize(device=rank)
     print("test run finish")
 

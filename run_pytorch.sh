@@ -46,5 +46,5 @@ TORCH_NCCL_USE_TENSOR_REGISTER_ALLOCATOR_HOOK=true \
 torchrun "${DISTRIBUTED_ARGS[@]}" ./corun_test.py $1 $2 $3 $4 $5 $6 > log.normal.tensor 2>&1
 
 # Lorri, this will call to p2p in rccl as expected
-TORCH_NCCL_USE_TENSOR_REGISTER_ALLOCATOR_HOOK=false \
-torchrun "${DISTRIBUTED_ARGS[@]}" ./corun_test_symm.py $1 $2 $3 $4 $5 $6 > log.explicit.symm.tensor 2>&1
+# TORCH_NCCL_USE_TENSOR_REGISTER_ALLOCATOR_HOOK=false \
+# torchrun "${DISTRIBUTED_ARGS[@]}" ./corun_test_symm.py $1 $2 $3 $4 $5 $6 > log.explicit.symm.tensor 2>&1
