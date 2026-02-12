@@ -36,6 +36,11 @@ DISTRIBUTED_ARGS=(
 # bash ./run_rccl.sh --config 405B --comm reduce_scatter # run 405B with reduce_scatter
 # bash ./run_rccl.sh --comm reduce_scatter # run 70B with reduce_scatter
 
+# Lorri, this will call to p2p in rccl as expected
+TORCH_NCCL_USE_TENSOR_REGISTER_ALLOCATOR_HOOK=false \
+torchrun "${DISTRIBUTED_ARGS[@]}" ./corun_register_mempool.py $1 $2 $3 $4 $5 $6 > log.mempool 2>&1
+
+
 # Lorri, this will call to ncclCommRegister / Window Register as expected
 TORCH_NCCL_USE_TENSOR_REGISTER_ALLOCATOR_HOOK=true \
 torchrun "${DISTRIBUTED_ARGS[@]}" ./corun_test.py $1 $2 $3 $4 $5 $6 > log.normal.tensor 2>&1

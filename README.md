@@ -109,6 +109,16 @@ https://github.com/pytorch/pytorch/blob/af3ee4dc21caa68d860acf0f8f66064469066a8a
 
 FSDP reference
 https://docs.nvidia.com/megatron-core/developer-guide/latest/discussions/megatron-fsdp-user-guide/megatron-fsdp-user-guide.html#add-use-nccl-ub
+
+https://github.com/NVIDIA/Megatron-LM/blob/1959739b8634badc490588d8fd3c90f7c4f73dbd/megatron/core/distributed/param_and_grad_buffer.py#L756
+
+NCCL memory pool
+https://github.com/pytorch/pytorch/pull/155134/changes
+
+as a reference on pool registration test
+https://github.com/pytorch/pytorch/blob/e1a61e7308a70d5f8019fab2a156b6363c114905/test/distributed/test_c10d_nccl.py#L4252
+
+https://github.com/pytorch/pytorch/pull/155134/changes#diff-9f639571a250cffbe9cded7d2fbb5ad6311e4be9c0c7610e5ba85930806e7f38R3142
 ```
 cd /workspace
 python -c "import torch; print(torch.version.git_version)"
