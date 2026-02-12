@@ -63,6 +63,22 @@ def init_dist(args):
     symm_mem.enable_symm_mem_for_group(group_name)
     args._symm_group_name = group_name
 
+
+    # Allocate tensors using symmetric memory
+    numel = 1024 * 1024
+    inp = symm_mem.empty(numel, device=device)
+    out = symm_mem.empty(numel * args.world_size, device=device)
+
+    # Register tensors for symmetric memory operations
+    symm_mem.rendezvous(inp, group=group_name)
+    symm_mem.rendezvous(out, group=group_name)
+
+    # Perform collective operation using copy engines
+    # This now runs on DMA engines instead of SMs
+    work = dist.all_gather_into_tensor(out, inp, async_op=True)
+    work.wait()
+    # refer to this:
+    # https://docs.pytorch.org/docs/stable/distributed.html#copy-engine-collectives
     if args.rank == 0:
         print(
             f"[Rank {args.rank}][LocalRank {args.local_rank}] Initialized with world size {args.world_size} (CE collectives + symmetric memory)"

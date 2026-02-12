@@ -90,23 +90,7 @@ def bandwidth_test(rank, size, world_size, group_name, comm):
         output_tensor = torch.zeros([num_elems * world_size], dtype=torch.bfloat16, device=device)
     # dist.barrier(async_op=False)
     torch.cuda.synchronize(device=rank)
-    start_time = time.time()
 
-    # Compute on a separate stream (matmul)
-    # m, n, k = 10240, 24576, 8192
-    # A = torch.randn(k, m, dtype=torch.bfloat16, device=device)
-    # B = torch.randn(k, n, dtype=torch.bfloat16, device=device)
-    # A = A.t()
-    # m, n, k = 16384, 53248, 16384
-    # torch.cuda.synchronize(device=rank)
-
-    # with torch.cuda.stream(s):
-    #     for i in range(15):
-    #         torch.matmul(A, B)
-
-    time.sleep(1)
-
-    # Perform collective using copy engines (async_op=True required for CE collectives)
     if comm == "all_gather":
         print("Doing all_gather")
         for i in range(1):
@@ -114,17 +98,7 @@ def bandwidth_test(rank, size, world_size, group_name, comm):
             # work.wait()
             work = dist.all_gather_into_tensor(output_tensor,input_tensor, async_op=True)
             work.wait()
-    else:
-        print("Doing reduce_scatter")
-        for i in range(1):
-            work = dist.reduce_scatter_tensor(
-                inp_symm, out_symm, torch.distributed.ReduceOp.AVG, async_op=True
-            )
-            work.wait()
 
-    torch.cuda.synchronize(device=rank)
-    end_time = time.time()
-    elapsed_time = end_time - start_time
 
 
 def run(rank, size, config, comm, group_name):

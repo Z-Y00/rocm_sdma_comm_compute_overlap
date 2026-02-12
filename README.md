@@ -126,7 +126,10 @@ TORCH_NCCL_USE_TENSOR_REGISTER_ALLOCATOR_HOOK will enable allocator hooked to be
 Then at the register hook, this line will check if it is symm, if it is, then will call ncclComm->registerSegment with window=true
 https://github.com/pytorch/pytorch/blob/e1a61e7308a70d5f8019fab2a156b6363c114905/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp#L309
 
-Regarding how to set Mempool as symm, seems there are two ways:
+Regarding how to set Mempool as symm, seems there are different ways:
+https://github.com/NVIDIA/Megatron-LM/blob/faced512869f130ae4c5d1b4779c3f7fd52b74ed/megatron/core/nccl_allocator.py#L128
+
+https://docs.nvidia.com/deeplearning/frameworks/pytorch-release-notes/rel-25-11.html
 
 ```
 cd /workspace
