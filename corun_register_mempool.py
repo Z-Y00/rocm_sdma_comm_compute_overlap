@@ -11,6 +11,7 @@ import torch
 import torch.distributed as dist
 import torch.distributed._symmetric_memory as symm_mem
 from torch.profiler import profile, record_function, ProfilerActivity
+import torch.distributed.distributed_c10d as c10d
 
 import argparse
 from datetime import timedelta
@@ -43,6 +44,7 @@ def init_dist(args):
     torch.cuda.device_count()
     torch.cuda.set_device(args.local_rank)
     device = torch.device("cuda", args.local_rank)
+    pool = torch.cuda.MemPool(allocator=torch.cuda.get_memory_allocator(device), device=device)
 
     # Initialize process group with zero-CTA policy for Copy Engine collectives
     opts = dist.ProcessGroupNCCL.Options()
@@ -56,44 +58,25 @@ def init_dist(args):
         rank=args.rank,
         timeout=timedelta(minutes=args.distributed_timeout_minutes),
     )
+    pg_nccl = dist.group.WORLD  # if backend is NCCL, this is the right object
 
-
-
-    if args.rank == 0:
-        print(
-            f"[Rank {args.rank}][LocalRank {args.local_rank}] Initialized with world size {args.world_size} (CE collectives + symmetric memory)"
-        )
-
-
-def bandwidth_test(rank, size, world_size, group_name, comm):
-    """
-    Run bandwidth test using symmetric memory tensors and Copy Engine collectives.
-    Communication runs on DMA engines instead of SMs for better compute/comm overlap.
-    """
+    # Register the pool with symm=True so that registerSegment(..., symm=true) is used
+    pg_nccl.register_mem_pool(pool, symm=True)
+    rank = args.rank
+    world_size = args.world_size
     device = torch.device("cuda", rank)
     s = torch.cuda.Stream(device=device)
     print("starting test")
+    size = 1024*1024
     num_elems = int(size)
 
-    # Set up symmetric memory with NCCL backend
-    # symm_mem.set_backend("NCCL")
-    group_name = dist.group.WORLD.group_name
-    # symm_mem.enable_symm_mem_for_group(group_name)
-    # args._symm_group_name = group_name
-    backend = dist.group._get_backend(torch.device(device))
-    # Use NCCL memory allocator
-    # enable symmetric memory usage in NCCL
-    pool = torch.cuda.MemPool(backend.mem_allocator, symm_mem=True)
-    backend.register_mem_pool(pool, symm=True)
     with torch.cuda.use_mem_pool(pool):
         input_tensor = torch.full([num_elems], rank, dtype=torch.bfloat16, device=device)
         output_tensor = torch.zeros([num_elems * world_size], dtype=torch.bfloat16, device=device)
     # dist.barrier(async_op=False)
     torch.cuda.synchronize(device=rank)
-
-    if comm == "all_gather":
-        print("Doing all_gather")
-        for i in range(1):
+    print("Doing all_gather")
+    for i in range(1):
             # work = dist.all_gather_into_tensor(out_symm, inp_symm, async_op=True)
             # work.wait()
             work = dist.all_gather_into_tensor(output_tensor,input_tensor, async_op=True)
@@ -101,19 +84,6 @@ def bandwidth_test(rank, size, world_size, group_name, comm):
 
 
 
-def run(rank, size, config, comm, group_name):
-    """Distributed run: bandwidth test with symmetric memory and CE collectives."""
-    # device = torch.device("cuda", rank)
-    # dist.barrier(async_op=False)
-    # torch.cuda.synchronize(device=rank)
-    # print("test run finish")
-
-    bandwidth_test(rank, (1024 * 1024 * 204) // 8, size, group_name, comm)
-    # with profile(activities=[ProfilerActivity.CUDA], record_shapes=True) as prof:
-        # bandwidth_test(None, rank, (1024*1024*204/8), size,config,comm)
-        # bandwidth_test(rank, (1024*1024*1024/2), size)
-    # prof.export_chrome_trace(f"./trace.{rank}.json")
-    torch.cuda.synchronize(device=rank)
 
 
 if __name__ == "__main__":
@@ -127,15 +97,7 @@ if __name__ == "__main__":
         torch.set_default_dtype(torch.bfloat16)
     else:
         torch.set_default_dtype(torch.float8_e4m3fnuz)
-
-    run(
-        args.rank,
-        args.world_size,
-        args.config,
-        args.comm,
-        getattr(args, "_symm_group_name", dist.group.WORLD.group_name),
-    )
-
+ 
     if dist.is_initialized():
         dist.destroy_process_group()
 
