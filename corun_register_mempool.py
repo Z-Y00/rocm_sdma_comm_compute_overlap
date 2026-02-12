@@ -112,7 +112,7 @@ def bandwidth_test(rank, size, world_size, group_name, comm):
         for i in range(1):
             # work = dist.all_gather_into_tensor(out_symm, inp_symm, async_op=True)
             # work.wait()
-            work = dist.all_gather_into_tensor(input_tensor, output_tensor, async_op=True)
+            work = dist.all_gather_into_tensor(output_tensor,input_tensor, async_op=True)
             work.wait()
     else:
         print("Doing reduce_scatter")
