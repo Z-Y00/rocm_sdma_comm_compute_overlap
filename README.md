@@ -119,6 +119,15 @@ as a reference on pool registration test
 https://github.com/pytorch/pytorch/blob/e1a61e7308a70d5f8019fab2a156b6363c114905/test/distributed/test_c10d_nccl.py#L4252
 
 https://github.com/pytorch/pytorch/pull/155134/changes#diff-9f639571a250cffbe9cded7d2fbb5ad6311e4be9c0c7610e5ba85930806e7f38R3142
+
+## Pytorch workflow summary:
+TORCH_NCCL_USE_TENSOR_REGISTER_ALLOCATOR_HOOK will enable allocator hooked to be registered as symm, which can either be ncclCommRegister or Window
+
+Then at the register hook, this line will check if it is symm, if it is, then will call ncclComm->registerSegment with window=true
+https://github.com/pytorch/pytorch/blob/e1a61e7308a70d5f8019fab2a156b6363c114905/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp#L309
+
+Regarding how to set Mempool as symm, seems there are two ways:
+
 ```
 cd /workspace
 python -c "import torch; print(torch.version.git_version)"

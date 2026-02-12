@@ -83,7 +83,7 @@ def bandwidth_test(rank, size, world_size, group_name, comm):
     backend = dist.group._get_backend(torch.device(device))
     # Use NCCL memory allocator
     # enable symmetric memory usage in NCCL
-    pool = torch.cuda.MemPool(backend.mem_allocator)
+    pool = torch.cuda.MemPool(backend.mem_allocator, symm_mem=True)
     backend.register_mem_pool(pool, symm=True)
     with torch.cuda.use_mem_pool(pool):
         input_tensor = torch.full([num_elems], rank, dtype=torch.bfloat16, device=device)
@@ -129,10 +129,10 @@ def bandwidth_test(rank, size, world_size, group_name, comm):
 
 def run(rank, size, config, comm, group_name):
     """Distributed run: bandwidth test with symmetric memory and CE collectives."""
-    device = torch.device("cuda", rank)
-    dist.barrier(async_op=False)
-    torch.cuda.synchronize(device=rank)
-    print("test run finish")
+    # device = torch.device("cuda", rank)
+    # dist.barrier(async_op=False)
+    # torch.cuda.synchronize(device=rank)
+    # print("test run finish")
 
     bandwidth_test(rank, (1024 * 1024 * 204) // 8, size, group_name, comm)
     # with profile(activities=[ProfilerActivity.CUDA], record_shapes=True) as prof:
