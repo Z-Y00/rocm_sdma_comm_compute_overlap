@@ -44,7 +44,8 @@ def init_dist(args):
     torch.cuda.device_count()
     torch.cuda.set_device(args.local_rank)
     device = torch.device("cuda", args.local_rank)
-    pool = torch.cuda.MemPool(allocator=torch.cuda.get_memory_allocator(device), device=device)
+    #pool = symm_mem.get_mem_pool(device) # only in later pytorch version
+    # pool = torch.cuda.MemPool(allocator=torch.cuda.get_memory_allocator(device), device=device)
 
     # Initialize process group with zero-CTA policy for Copy Engine collectives
     opts = dist.ProcessGroupNCCL.Options()
@@ -58,10 +59,15 @@ def init_dist(args):
         rank=args.rank,
         timeout=timedelta(minutes=args.distributed_timeout_minutes),
     )
+    #device = torch.device("cuda:0")  # or your rank's device
+    #with torch.cuda.device(device):
+    pg = c10d._get_default_group()
+    backend = pg._get_backend(device)
+    pool = torch.cuda.MemPool(backend.mem_allocator)
     pg_nccl = dist.group.WORLD  # if backend is NCCL, this is the right object
 
     # Register the pool with symm=True so that registerSegment(..., symm=true) is used
-    pg_nccl.register_mem_pool(pool, symm=True)
+    backend.register_mem_pool(pool, symm=True)
     rank = args.rank
     world_size = args.world_size
     device = torch.device("cuda", rank)
