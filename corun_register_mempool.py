@@ -84,10 +84,10 @@ def bandwidth_test(rank, size, world_size, group_name, comm):
     # Use NCCL memory allocator
     # enable symmetric memory usage in NCCL
     pool = torch.cuda.MemPool(backend.mem_allocator)
+    backend.register_mem_pool(pool, symm=True)
     with torch.cuda.use_mem_pool(pool):
         input_tensor = torch.full([num_elems], rank, dtype=torch.bfloat16, device=device)
         output_tensor = torch.zeros([num_elems * world_size], dtype=torch.bfloat16, device=device)
-    backend.register_mem_pool(pool, symm=True)
     # dist.barrier(async_op=False)
     torch.cuda.synchronize(device=rank)
     start_time = time.time()
