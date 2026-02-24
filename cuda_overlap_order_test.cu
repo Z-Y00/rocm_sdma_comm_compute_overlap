@@ -1,5 +1,4 @@
 #include <cuda_runtime.h>
-#include <cublas_v2.h>
 #include <mpi.h>
 
 #include <cstdio>
@@ -16,16 +15,6 @@
         }                                                                      \
     }
 
-#define CUBLAS_CHECK(cmd)                                                      \
-    {                                                                          \
-        cublasStatus_t status = cmd;                                           \
-        if (status != CUBLAS_STATUS_SUCCESS) {                                 \
-            fprintf(stderr, "cuBLAS error: %d at %s:%d\n",                     \
-                    static_cast<int>(status), __FILE__, __LINE__);             \
-            MPI_Abort(MPI_COMM_WORLD, static_cast<int>(status));               \
-        }                                                                      \
-    }
-
 #define MPI_CHECK(cmd)                                                         \
     {                                                                          \
         int error = cmd;                                                       \
@@ -36,35 +25,44 @@
         }                                                                      \
     }
 
-static void enqueue_large_gemm(cublasHandle_t handle,
-                               float* d_a,
-                               float* d_b,
-                               float* d_c,
-                               int m,
-                               int n,
-                               int k) {
-    const float alpha = 1.0f;
-    const float beta = 0.0f;
-    CUBLAS_CHECK(cublasSgemm(
-        handle,
-        CUBLAS_OP_N,
-        CUBLAS_OP_N,
-        m,
-        n,
-        k,
-        &alpha,
-        d_a,
-        m,
-        d_b,
-        k,
-        &beta,
-        d_c,
-        m));
+__global__ static void init_compute_buffers(float* a, float* b, float* c, size_t n) {
+    const size_t idx = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (idx < n) {
+        a[idx] = 1.001f;
+        b[idx] = 1.0001f;
+        c[idx] = 0.0f;
+    }
+}
+
+__global__ static void mul_add_kernel(const float* a,
+                                      const float* b,
+                                      float* c,
+                                      size_t n,
+                                      float alpha,
+                                      float beta) {
+    const size_t idx = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (idx < n) {
+        c[idx] = alpha * a[idx] + beta * b[idx] + c[idx];
+    }
+}
+
+static void enqueue_large_compute(cudaStream_t stream,
+                                  float* d_a,
+                                  float* d_b,
+                                  float* d_c,
+                                  size_t num_elems,
+                                  int iters) {
+    const int threads = 256;
+    const int blocks = static_cast<int>((num_elems + threads - 1) / threads);
+    for (int i = 0; i < iters; i++) {
+        mul_add_kernel<<<blocks, threads, 0, stream>>>(
+            d_a, d_b, d_c, num_elems, 1.0001f, 0.9999f);
+    }
+    CUDA_CHECK(cudaGetLastError());
 }
 
 static float run_ordering_case(int rank,
                                cudaStream_t stream,
-                               cublasHandle_t cublas_handle,
                                float* d_a,
                                float* d_b,
                                float* d_c,
@@ -76,22 +74,21 @@ static float run_ordering_case(int rank,
                                size_t* attr_idxs,
                                bool gemm_first,
                                const char* scenario_name,
-                               int m,
-                               int n,
-                               int k) {
+                               size_t compute_elems,
+                               int compute_iters) {
     cudaEvent_t start, stop;
     CUDA_CHECK(cudaEventCreate(&start));
     CUDA_CHECK(cudaEventCreate(&stop));
 
     CUDA_CHECK(cudaEventRecord(start, stream));
     if (gemm_first) {
-        enqueue_large_gemm(cublas_handle, d_a, d_b, d_c, m, n, k);
+        enqueue_large_compute(stream, d_a, d_b, d_c, compute_elems, compute_iters);
         CUDA_CHECK(cudaMemcpyBatchAsync(
             dst_ptrs, src_ptrs, sizes, num_copies, attrs, attr_idxs, 1, stream));
     } else {
         CUDA_CHECK(cudaMemcpyBatchAsync(
             dst_ptrs, src_ptrs, sizes, num_copies, attrs, attr_idxs, 1, stream));
-        enqueue_large_gemm(cublas_handle, d_a, d_b, d_c, m, n, k);
+        enqueue_large_compute(stream, d_a, d_b, d_c, compute_elems, compute_iters);
     }
     CUDA_CHECK(cudaEventRecord(stop, stream));
     CUDA_CHECK(cudaStreamSynchronize(stream));
@@ -104,8 +101,8 @@ static float run_ordering_case(int rank,
     if (rank == 0) {
         printf("[%s] %s elapsed: %.3f ms\n",
                scenario_name,
-               gemm_first ? "Case 1 (GEMM -> cudaMemcpyBatchAsync)" :
-                            "Case 2 (cudaMemcpyBatchAsync -> GEMM)",
+               gemm_first ? "Case 1 (Compute -> cudaMemcpyBatchAsync)" :
+                            "Case 2 (cudaMemcpyBatchAsync -> Compute)",
                elapsed_ms);
     }
     return elapsed_ms;
@@ -133,40 +130,38 @@ int main(int argc, char** argv) {
     CUDA_CHECK(cudaSetDevice(device_id));
 
     // Keep defaults simple but configurable:
-    // argv[1]=m, argv[2]=n, argv[3]=k, argv[4]=copy_bytes
-    int m = 4096;
-    int n = 4096;
-    int k = 4096;
+    // argv[1]=compute_elems, argv[2]=compute_iters, argv[3]=copy_bytes
+    size_t compute_elems = 16ULL * 1024ULL * 1024ULL;
+    int compute_iters = 64;
     size_t copy_bytes = 64ULL * 1024ULL * 1024ULL;  // 64 MiB per copy
-    if (argc > 1) m = std::atoi(argv[1]);
-    if (argc > 2) n = std::atoi(argv[2]);
-    if (argc > 3) k = std::atoi(argv[3]);
-    if (argc > 4) copy_bytes = static_cast<size_t>(std::strtoull(argv[4], nullptr, 10));
+    if (argc > 1) compute_elems = static_cast<size_t>(std::strtoull(argv[1], nullptr, 10));
+    if (argc > 2) compute_iters = std::atoi(argv[2]);
+    if (argc > 3) copy_bytes = static_cast<size_t>(std::strtoull(argv[3], nullptr, 10));
+    if (compute_iters < 1) compute_iters = 1;
 
     if (rank == 0) {
         printf("Running same-stream ordering test on %d rank(s).\n", world_size);
-        printf("Device count=%d, rank0 device=%d, GEMM=(%d,%d,%d), copy_bytes=%zu\n",
-               device_count, device_id, m, n, k, copy_bytes);
+        printf("Device count=%d, rank0 device=%d, compute_elems=%zu, compute_iters=%d, copy_bytes=%zu\n",
+               device_count, device_id, compute_elems, compute_iters, copy_bytes);
         printf("Both orderings use cudaMemcpyFlagPreferOverlapWithCompute.\n");
     }
 
     cudaStream_t stream;
     CUDA_CHECK(cudaStreamCreate(&stream));
 
-    cublasHandle_t cublas_handle;
-    CUBLAS_CHECK(cublasCreate(&cublas_handle));
-    CUBLAS_CHECK(cublasSetStream(cublas_handle, stream));
-
-    // GEMM buffers.
+    // Compute buffers.
     float* d_a = nullptr;
     float* d_b = nullptr;
     float* d_c = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_a, static_cast<size_t>(m) * k * sizeof(float)));
-    CUDA_CHECK(cudaMalloc(&d_b, static_cast<size_t>(k) * n * sizeof(float)));
-    CUDA_CHECK(cudaMalloc(&d_c, static_cast<size_t>(m) * n * sizeof(float)));
-    CUDA_CHECK(cudaMemsetAsync(d_a, 1, static_cast<size_t>(m) * k * sizeof(float), stream));
-    CUDA_CHECK(cudaMemsetAsync(d_b, 2, static_cast<size_t>(k) * n * sizeof(float), stream));
-    CUDA_CHECK(cudaMemsetAsync(d_c, 0, static_cast<size_t>(m) * n * sizeof(float), stream));
+    CUDA_CHECK(cudaMalloc(&d_a, compute_elems * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_b, compute_elems * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_c, compute_elems * sizeof(float)));
+    {
+        const int threads = 256;
+        const int blocks = static_cast<int>((compute_elems + threads - 1) / threads);
+        init_compute_buffers<<<blocks, threads, 0, stream>>>(d_a, d_b, d_c, compute_elems);
+        CUDA_CHECK(cudaGetLastError());
+    }
 
     // Batch memcpy buffers (pinned host + device).
     float* h_src = nullptr;
@@ -223,7 +218,7 @@ int main(int argc, char** argv) {
         const void* src_ptrs[1] = {src};
 
         // Warmup per scenario to reduce first-use impact.
-        enqueue_large_gemm(cublas_handle, d_a, d_b, d_c, m, n, k);
+        enqueue_large_compute(stream, d_a, d_b, d_c, compute_elems, compute_iters);
         CUDA_CHECK(cudaMemcpyBatchAsync(
             dst_ptrs, src_ptrs, sizes, num_copies, attrs, attr_idxs, 1, stream));
         CUDA_CHECK(cudaStreamSynchronize(stream));
@@ -231,7 +226,6 @@ int main(int argc, char** argv) {
         MPI_CHECK(MPI_Barrier(MPI_COMM_WORLD));
         run_ordering_case(rank,
                           stream,
-                          cublas_handle,
                           d_a,
                           d_b,
                           d_c,
@@ -243,13 +237,11 @@ int main(int argc, char** argv) {
                           attr_idxs,
                           true,
                           scenario_name,
-                          m,
-                          n,
-                          k);
+                          compute_elems,
+                          compute_iters);
         MPI_CHECK(MPI_Barrier(MPI_COMM_WORLD));
         run_ordering_case(rank,
                           stream,
-                          cublas_handle,
                           d_a,
                           d_b,
                           d_c,
@@ -261,9 +253,8 @@ int main(int argc, char** argv) {
                           attr_idxs,
                           false,
                           scenario_name,
-                          m,
-                          n,
-                          k);
+                          compute_elems,
+                          compute_iters);
         MPI_CHECK(MPI_Barrier(MPI_COMM_WORLD));
     };
 
@@ -281,7 +272,7 @@ int main(int argc, char** argv) {
     CUDA_CHECK(cudaMemcpy(&c0, d_c, sizeof(float), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(h_dst_remote, d_buf2, sizeof(float), cudaMemcpyDeviceToHost));
     if (rank == 0) {
-        printf("Sanity values: GEMM C[0]=%.4f, D2H h_dst[0]=%.4f, D2D->host[0]=%.4f\n",
+        printf("Sanity values: Compute C[0]=%.4f, D2H h_dst[0]=%.4f, D2D->host[0]=%.4f\n",
                c0, h_dst[0], h_dst_remote[0]);
     }
 
@@ -297,7 +288,6 @@ int main(int argc, char** argv) {
     CUDA_CHECK(cudaFreeHost(h_src));
     CUDA_CHECK(cudaFreeHost(h_dst));
     CUDA_CHECK(cudaFreeHost(h_dst_remote));
-    CUBLAS_CHECK(cublasDestroy(cublas_handle));
     CUDA_CHECK(cudaStreamDestroy(stream));
 
     MPI_Finalize();
