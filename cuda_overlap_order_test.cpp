@@ -75,6 +75,7 @@ static float run_ordering_case(int rank,
                                cudaMemcpyAttributes* attrs,
                                size_t* attr_idxs,
                                bool gemm_first,
+                               const char* scenario_name,
                                int m,
                                int n,
                                int k) {
@@ -101,7 +102,8 @@ static float run_ordering_case(int rank,
     CUDA_CHECK(cudaEventDestroy(stop));
 
     if (rank == 0) {
-        printf("%s elapsed: %.3f ms\n",
+        printf("[%s] %s elapsed: %.3f ms\n",
+               scenario_name,
                gemm_first ? "Case 1 (GEMM -> cudaMemcpyBatchAsync)" :
                             "Case 2 (cudaMemcpyBatchAsync -> GEMM)",
                elapsed_ms);
@@ -145,7 +147,7 @@ int main(int argc, char** argv) {
         printf("Running same-stream ordering test on %d rank(s).\n", world_size);
         printf("Device count=%d, rank0 device=%d, GEMM=(%d,%d,%d), copy_bytes=%zu\n",
                device_count, device_id, m, n, k, copy_bytes);
-        printf("Both cases use cudaMemcpyFlagPreferOverlapWithCompute.\n");
+        printf("Both orderings use cudaMemcpyFlagPreferOverlapWithCompute.\n");
     }
 
     cudaStream_t stream;
@@ -169,84 +171,132 @@ int main(int argc, char** argv) {
     // Batch memcpy buffers (pinned host + device).
     float* h_src = nullptr;
     float* h_dst = nullptr;
+    float* h_dst_remote = nullptr;
     void* d_buf1 = nullptr;
     void* d_buf2 = nullptr;
+    void* d_buf_remote_src = nullptr;
     CUDA_CHECK(cudaMallocHost(&h_src, copy_bytes));
     CUDA_CHECK(cudaMallocHost(&h_dst, copy_bytes));
+    CUDA_CHECK(cudaMallocHost(&h_dst_remote, copy_bytes));
     CUDA_CHECK(cudaMalloc(&d_buf1, copy_bytes));
     CUDA_CHECK(cudaMalloc(&d_buf2, copy_bytes));
+    CUDA_CHECK(cudaMalloc(&d_buf_remote_src, copy_bytes));
 
     const size_t num_float = copy_bytes / sizeof(float);
     for (size_t i = 0; i < num_float; i++) {
         h_src[i] = static_cast<float>((i + rank) % 1024);
     }
+    CUDA_CHECK(cudaMemcpyAsync(d_buf_remote_src, h_src, copy_bytes, cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(cudaMemsetAsync(d_buf1, 0, copy_bytes, stream));
+    CUDA_CHECK(cudaMemsetAsync(d_buf2, 0, copy_bytes, stream));
+    CUDA_CHECK(cudaStreamSynchronize(stream));
 
-    const size_t num_copies = 3;
-    const void* src_ptrs[num_copies] = {h_src, d_buf1, d_buf2};
-    void* dst_ptrs[num_copies] = {d_buf1, d_buf2, h_dst};
-    size_t sizes[num_copies] = {copy_bytes, copy_bytes, copy_bytes};
+    // Build a remote P2P source pointer from peer rank via CUDA IPC.
+    void* peer_remote_src = nullptr;
+    const bool can_run_p2p_remote = (world_size >= 2);
+    if (can_run_p2p_remote) {
+        const int peer_rank = (rank + 1) % world_size;
+        cudaIpcMemHandle_t local_handle;
+        CUDA_CHECK(cudaIpcGetMemHandle(&local_handle, d_buf_remote_src));
+        std::vector<cudaIpcMemHandle_t> all_handles(world_size);
+        MPI_CHECK(MPI_Allgather(&local_handle,
+                                sizeof(cudaIpcMemHandle_t),
+                                MPI_BYTE,
+                                all_handles.data(),
+                                sizeof(cudaIpcMemHandle_t),
+                                MPI_BYTE,
+                                MPI_COMM_WORLD));
+        cudaIpcMemHandle_t peer_handle = all_handles[peer_rank];
+        CUDA_CHECK(cudaIpcOpenMemHandle(
+            &peer_remote_src, peer_handle, cudaIpcMemLazyEnablePeerAccess));
+    }
 
     cudaMemcpyAttributes attrs[1] = {};
     attrs[0].srcAccessOrder = cudaMemcpySrcAccessOrderStream;
     attrs[0].flags = cudaMemcpyFlagPreferOverlapWithCompute;
-    size_t attr_idxs[] = {0, num_copies};
+    size_t attr_idxs[] = {0, 1};
+    const size_t num_copies = 1;
+    size_t sizes[1] = {copy_bytes};
 
-    // Warm up the stream once so first-use overhead is not part of case timing.
-    enqueue_large_gemm(cublas_handle, d_a, d_b, d_c, m, n, k);
-    CUDA_CHECK(cudaMemcpyBatchAsync(
-        dst_ptrs, src_ptrs, sizes, num_copies, attrs, attr_idxs, 1, stream));
-    CUDA_CHECK(cudaStreamSynchronize(stream));
+    auto run_scenario = [&](const char* scenario_name, void* dst, const void* src) {
+        void* dst_ptrs[1] = {dst};
+        const void* src_ptrs[1] = {src};
 
-    MPI_CHECK(MPI_Barrier(MPI_COMM_WORLD));
-    run_ordering_case(rank,
-                      stream,
-                      cublas_handle,
-                      d_a,
-                      d_b,
-                      d_c,
-                      dst_ptrs,
-                      src_ptrs,
-                      sizes,
-                      num_copies,
-                      attrs,
-                      attr_idxs,
-                      true,
-                      m,
-                      n,
-                      k);
-    MPI_CHECK(MPI_Barrier(MPI_COMM_WORLD));
-    run_ordering_case(rank,
-                      stream,
-                      cublas_handle,
-                      d_a,
-                      d_b,
-                      d_c,
-                      dst_ptrs,
-                      src_ptrs,
-                      sizes,
-                      num_copies,
-                      attrs,
-                      attr_idxs,
-                      false,
-                      m,
-                      n,
-                      k);
-    MPI_CHECK(MPI_Barrier(MPI_COMM_WORLD));
+        // Warmup per scenario to reduce first-use impact.
+        enqueue_large_gemm(cublas_handle, d_a, d_b, d_c, m, n, k);
+        CUDA_CHECK(cudaMemcpyBatchAsync(
+            dst_ptrs, src_ptrs, sizes, num_copies, attrs, attr_idxs, 1, stream));
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+
+        MPI_CHECK(MPI_Barrier(MPI_COMM_WORLD));
+        run_ordering_case(rank,
+                          stream,
+                          cublas_handle,
+                          d_a,
+                          d_b,
+                          d_c,
+                          dst_ptrs,
+                          src_ptrs,
+                          sizes,
+                          num_copies,
+                          attrs,
+                          attr_idxs,
+                          true,
+                          scenario_name,
+                          m,
+                          n,
+                          k);
+        MPI_CHECK(MPI_Barrier(MPI_COMM_WORLD));
+        run_ordering_case(rank,
+                          stream,
+                          cublas_handle,
+                          d_a,
+                          d_b,
+                          d_c,
+                          dst_ptrs,
+                          src_ptrs,
+                          sizes,
+                          num_copies,
+                          attrs,
+                          attr_idxs,
+                          false,
+                          scenario_name,
+                          m,
+                          n,
+                          k);
+        MPI_CHECK(MPI_Barrier(MPI_COMM_WORLD));
+    };
+
+    if (can_run_p2p_remote) {
+        run_scenario("P2P remote D2D", d_buf2, peer_remote_src);
+    } else if (rank == 0) {
+        printf("[P2P remote D2D] Skipped (requires world_size >= 2)\n");
+    }
+    run_scenario("D2H", h_dst, d_buf1);
+    run_scenario("H2D", d_buf1, h_src);
+    run_scenario("D2D local", d_buf2, d_buf1);
 
     // Quick touch to ensure outputs were materialized.
     float c0 = 0.0f;
     CUDA_CHECK(cudaMemcpy(&c0, d_c, sizeof(float), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(h_dst_remote, d_buf2, sizeof(float), cudaMemcpyDeviceToHost));
     if (rank == 0) {
-        printf("Sanity values: GEMM C[0]=%.4f, memcpy h_dst[0]=%.4f\n", c0, h_dst[0]);
+        printf("Sanity values: GEMM C[0]=%.4f, D2H h_dst[0]=%.4f, D2D->host[0]=%.4f\n",
+               c0, h_dst[0], h_dst_remote[0]);
     }
 
+    if (peer_remote_src != nullptr) {
+        CUDA_CHECK(cudaIpcCloseMemHandle(peer_remote_src));
+    }
     CUDA_CHECK(cudaFree(d_a));
     CUDA_CHECK(cudaFree(d_b));
     CUDA_CHECK(cudaFree(d_c));
     CUDA_CHECK(cudaFree(d_buf1));
     CUDA_CHECK(cudaFree(d_buf2));
+    CUDA_CHECK(cudaFree(d_buf_remote_src));
     CUDA_CHECK(cudaFreeHost(h_src));
     CUDA_CHECK(cudaFreeHost(h_dst));
+    CUDA_CHECK(cudaFreeHost(h_dst_remote));
     CUBLAS_CHECK(cublasDestroy(cublas_handle));
     CUDA_CHECK(cudaStreamDestroy(stream));
 
