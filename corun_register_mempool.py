@@ -44,7 +44,8 @@ def init_dist(args):
     torch.cuda.device_count()
     torch.cuda.set_device(args.local_rank)
     device = torch.device("cuda", args.local_rank)
-    #pool = symm_mem.get_mem_pool(device) # only in later pytorch version
+    # https://github.com/ROCm/pytorch/blob/2508761f69eeed58a466eaf4daeb0bc802d4161e/torch/distributed/_symmetric_memory/__init__.py#L2065
+    # pool = symm_mem.get_mem_pool(device) # only in 2.10+ later pytorch version
     # pool = torch.cuda.MemPool(allocator=torch.cuda.get_memory_allocator(device), device=device)
 
     # Initialize process group with zero-CTA policy for Copy Engine collectives

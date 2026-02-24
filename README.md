@@ -131,9 +131,17 @@ https://github.com/NVIDIA/Megatron-LM/blob/faced512869f130ae4c5d1b4779c3f7fd52b7
 
 https://docs.nvidia.com/deeplearning/frameworks/pytorch-release-notes/rel-25-11.html
 
+
+ vim +5794 /workspace/pytorch/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp
+ we need to return true for MI300+
+ https://github.com/pytorch/pytorch/blob/c0a3948d27c6900502423dc82cde078cc12a2b6b/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp#L5846
+
+see this usage example
+    # https://github.com/ROCm/pytorch/blob/2508761f69eeed58a466eaf4daeb0bc802d4161e/torch/distributed/_symmetric_memory/__init__.py#L2065
+
 ```
 cd /workspace
-python -c "import torch; print(torch.version.git_version)"
+python -c "import torch; print(torch.__version__,torch.version.git_version)"
 # 7bb0466bb4d732f0aa3273c0122f3213003b182b
 python3 -m pip install --upgrade pip
 pip install ninja  setuptools wheel uv tabulate ipython pytest fire pydantic pybind11
@@ -167,8 +175,16 @@ apt-get install gdb openmpi-bin libopenmpi-dev vim -y
 
 nvcc -std=c++14 -O0 -g -o sdma_memcpy_test test.cpp -lmpi -lmpi_cxx -I/usr/lib/x86_64-linux-gnu/openmpi/include -I/usr/lib/x86_64-linux-gnu/openmpi/include/openmpi
 
+nvcc -std=c++14 -O0 -g -o overlap_test test.cpp -lmpi -lmpi_cxx -I/usr/lib/x86_64-linux-gnu/openmpi/include -I/usr/lib/x86_64-linux-gnu/openmpi/include/openmpi  -lcublas
+
 gdb --args mpirun -np 8 --allow-run-as-root sdma_memcpy_test
 
 nsys profile mpirun -np 8 --allow-run-as-root sdma_memcpy_test
 nsys profile mpirun -np 2 --allow-run-as-root sdma_memcpy_test
 ```
+
+
+## blockers
+Always return false:
+https://github.com/pytorch/pytorch/blob/c0a3948d27c6900502423dc82cde078cc12a2b6b/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp#L5847
+
