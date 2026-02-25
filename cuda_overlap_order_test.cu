@@ -73,6 +73,7 @@ static float run_ordering_case(int rank,
                                cudaMemcpyAttributes* attrs,
                                size_t* attr_idxs,
                                bool gemm_first,
+                               const char* src_access_order_name,
                                const char* scenario_name,
                                size_t compute_elems,
                                int compute_iters) {
@@ -99,7 +100,8 @@ static float run_ordering_case(int rank,
     CUDA_CHECK(cudaEventDestroy(stop));
 
     if (rank == 0) {
-        printf("[%s] %s elapsed: %.3f ms\n",
+        printf("[%s][%s] %s elapsed: %.3f ms\n",
+               src_access_order_name,
                scenario_name,
                gemm_first ? "Case 1 (Compute -> cudaMemcpyBatchAsync)" :
                             "Case 2 (cudaMemcpyBatchAsync -> Compute)",
@@ -143,7 +145,7 @@ int main(int argc, char** argv) {
         printf("Running same-stream ordering test on %d rank(s).\n", world_size);
         printf("Device count=%d, rank0 device=%d, compute_elems=%zu, compute_iters=%d, copy_bytes=%zu\n",
                device_count, device_id, compute_elems, compute_iters, copy_bytes);
-        printf("Both orderings use cudaMemcpyFlagPreferOverlapWithCompute.\n");
+        printf("Testing all cudaMemcpy srcAccessOrder modes with cudaMemcpyFlagPreferOverlapWithCompute.\n");
     }
 
     cudaStream_t stream;
@@ -207,13 +209,15 @@ int main(int argc, char** argv) {
     }
 
     cudaMemcpyAttributes attrs[1] = {};
-    attrs[0].srcAccessOrder = cudaMemcpySrcAccessOrderStream;
     attrs[0].flags = cudaMemcpyFlagPreferOverlapWithCompute;
     size_t attr_idxs[] = {0, 1};
     const size_t num_copies = 1;
     size_t sizes[1] = {copy_bytes};
 
-    auto run_scenario = [&](const char* scenario_name, void* dst, const void* src) {
+    auto run_scenario = [&](const char* src_access_order_name,
+                            const char* scenario_name,
+                            void* dst,
+                            const void* src) {
         void* dst_ptrs[1] = {dst};
         const void* src_ptrs[1] = {src};
 
@@ -236,6 +240,7 @@ int main(int argc, char** argv) {
                           attrs,
                           attr_idxs,
                           true,
+                          src_access_order_name,
                           scenario_name,
                           compute_elems,
                           compute_iters);
@@ -252,20 +257,39 @@ int main(int argc, char** argv) {
                           attrs,
                           attr_idxs,
                           false,
+                          src_access_order_name,
                           scenario_name,
                           compute_elems,
                           compute_iters);
         MPI_CHECK(MPI_Barrier(MPI_COMM_WORLD));
     };
 
-    if (can_run_p2p_remote) {
-        run_scenario("P2P remote D2D", d_buf2, peer_remote_src);
-    } else if (rank == 0) {
-        printf("[P2P remote D2D] Skipped (requires world_size >= 2)\n");
+    struct SrcAccessMode {
+        cudaMemcpySrcAccessOrder order;
+        const char* name;
+    };
+    const SrcAccessMode access_modes[] = {
+        {cudaMemcpySrcAccessOrderDuringApiCall, "cudaMemcpySrcAccessOrderDuringApiCall"},
+        {cudaMemcpySrcAccessOrderStream, "cudaMemcpySrcAccessOrderStream"},
+        {cudaMemcpySrcAccessOrderAny, "cudaMemcpySrcAccessOrderAny"},
+    };
+
+    for (const auto& mode : access_modes) {
+        attrs[0].srcAccessOrder = mode.order;
+        if (rank == 0) {
+            printf("\n=== srcAccessOrder: %s ===\n", mode.name);
+        }
+        MPI_CHECK(MPI_Barrier(MPI_COMM_WORLD));
+
+        if (can_run_p2p_remote) {
+            run_scenario(mode.name, "P2P remote D2D", d_buf2, peer_remote_src);
+        } else if (rank == 0) {
+            printf("[%s][P2P remote D2D] Skipped (requires world_size >= 2)\n", mode.name);
+        }
+        run_scenario(mode.name, "D2H", h_dst, d_buf1);
+        run_scenario(mode.name, "H2D", d_buf1, h_src);
+        run_scenario(mode.name, "D2D local", d_buf2, d_buf1);
     }
-    run_scenario("D2H", h_dst, d_buf1);
-    run_scenario("H2D", d_buf1, h_src);
-    run_scenario("D2D local", d_buf2, d_buf1);
 
     // Quick touch to ensure outputs were materialized.
     float c0 = 0.0f;
